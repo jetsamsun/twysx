@@ -1,3 +1,4 @@
 # phpstudy 自动生成，不需要纳入仓库
 .htaccess
 nginx.htaccess
+node_modules/
