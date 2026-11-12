@@ -1,30 +1,52 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>twysx</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: #0f1115;
-      color: #e6e6e6;
-    }
-    .card { text-align: center; }
-    h1 { font-size: 3rem; letter-spacing: .1em; margin-bottom: .5rem; }
-    p { color: #8a8f98; }
-    .dot { color: #4f8cff; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>twysx</title>
+<meta name="description" content="twysx：极简博客与每日国际新闻">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="card">
-    <h1>twysx<span class="dot">.</span></h1>
-    <p>站点已上线 · Powered by nginx</p>
-  </div>
+<div class="wrap">
+<header class="site"><a class="brand" href="/">twysx<span>.</span></a><nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>
+<main>
+<section>
+<div class="sec">文章</div>
+<ul class="list">
+<li><time datetime="2026-11-12">11-12</time><a href="/p/hello.html">你好，twysx</a></li>
+</ul>
+</section>
+<section id="news" hidden>
+<div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>
+<ul class="list" id="news-list"></ul>
+</section>
+<noscript><p><a href="/news/">查看国际新闻 →</a></p></noscript>
+<script>
+(function () {
+  var box = document.getElementById('news');
+  fetch('/news/latest.json', {cache: 'no-cache'})
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function (items) {
+      var ul = document.getElementById('news-list'), n = 0;
+      items.forEach(function (it) {
+        if (n >= 12 || String(it.u).indexOf('/news/') !== 0) return;
+        var li = document.createElement('li'), t = document.createElement('time'),
+            a = document.createElement('a'), s = document.createElement('small');
+        t.textContent = String(it.d).slice(5);
+        a.textContent = it.t; a.href = it.u; a.lang = 'en';
+        s.textContent = it.s;
+        li.appendChild(t); li.appendChild(a); li.appendChild(s);
+        ul.appendChild(li); n++;
+      });
+      if (n) box.hidden = false;
+    })
+    .catch(function () {});
+})();
+</script>
+
+</main>
+<footer class="site">© 2026 twysx</footer>
+</div>
 </body>
 </html>

@@ -2,3 +2,11 @@
 .htaccess
 nginx.htaccess
 node_modules/
+
+# 服务器每天生成的新闻页面和数据，不进 git
+/news/
+
+# Word 文档不放进网站目录（会被 nginx 公开访问）
+*.docx
+
+__pycache__/
