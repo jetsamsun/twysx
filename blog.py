@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import email.utils
+import hashlib
 import html
 import json
 import os
@@ -94,6 +95,22 @@ def slugify(s, n=50):
 
 # ----------------------------------------------------------------- 页面外壳
 
+_css_url = None
+
+
+def css_url():
+    """CSS 链接带上内容哈希（/style.css?v=xxxx）：改了样式，URL 就变，Cloudflare 和浏览器的旧缓存不会再卡住。
+    哈希前统一成 LF，避免 Windows(CRLF) 和服务器(LF) 算出不同的值。"""
+    global _css_url
+    if _css_url is None:
+        try:
+            data = (ROOT / "style.css").read_bytes().replace(b"\r\n", b"\n")
+            _css_url = "/style.css?v=" + hashlib.md5(data).hexdigest()[:8]
+        except OSError:
+            _css_url = "/style.css"
+    return _css_url
+
+
 def page(title, body, desc="", extra_head=""):
     full = "%s · %s" % (title, SITE) if title else SITE
     year = datetime.now(TZ).year
@@ -103,13 +120,13 @@ def page(title, body, desc="", extra_head=""):
         '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
         "<title>%s</title>\n"
         '<meta name="description" content="%s">\n'
-        '<link rel="stylesheet" href="/style.css">\n'
+        '<link rel="stylesheet" href="%s">\n'
         "%s</head>\n<body>\n<div class=\"wrap\">\n"
         '<header class="site"><a class="brand" href="/">%s<span>.</span></a>'
         '<nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>\n'
         "<main>\n%s\n</main>\n"
         '<footer class="site">© %d %s</footer>\n</div>\n</body>\n</html>\n'
-    ) % (esc_text(full), esc(desc), extra_head, SITE, body, year, SITE)
+    ) % (esc_text(full), esc(desc), esc(css_url()), extra_head, SITE, body, year, SITE)
 
 
 # ----------------------------------------------------------------- Markdown（够用的子集）

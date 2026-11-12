@@ -26,6 +26,8 @@ python blog.py build     # 生成 index.html、p/（文章页）和 news/（新�
 `index.html` 和 `p/` 是生成物，**要一起提交**；`news/` 是新闻内容，已在 `.gitignore` 里，不提交。
 预览：用 phpstudy 打开本地站点，或在本目录运行 `python -m http.server 8099`。
 
+CSS 链接自带内容哈希（`/style.css?v=xxxx`）：改了 `style.css` 后重新 `build` 并提交，Cloudflare 和浏览器就不会再用旧样式。服务器上的新闻页面在下次 `daily` 或手动 `python3 blog.py news` 后换成新链接。
+
 ## 每日国际新闻
 
 `python3 blog.py daily` 每次运行会：
