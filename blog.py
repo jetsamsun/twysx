@@ -348,56 +348,26 @@ def build_posts(posts):
             old.unlink()
 
 
-HOME_JS = """<script>
-(function () {
-  var box = document.getElementById('news');
-  fetch('/news/latest.json', {cache: 'no-cache'})
-    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-    .then(function (items) {
-      var ul = document.getElementById('news-list'), n = 0;
-      items.forEach(function (it) {
-        if (n >= 12 || String(it.u).indexOf('/news/') !== 0) return;
-        var li = document.createElement('li'), t = document.createElement('time'),
-            a = document.createElement('a'), s = document.createElement('small');
-        t.textContent = String(it.d);
-        a.textContent = it.t; a.href = it.u; a.lang = 'en';
-        s.textContent = it.s;
-        li.appendChild(t); li.appendChild(a); li.appendChild(s);
-        ul.appendChild(li); n++;
-      });
-      if (n) box.hidden = false;
-    })
-    .catch(function () {});
-})();
-</script>
-"""
-
-
 def build_home(posts):
-    """首页：文章列表分页（第 1 页是 /，之后是 /page/N/），国际新闻只出现在第 1 页。"""
+    """首页就是导航里的「文章」：只列文章，分页（第 1 页是 /，之后是 /page/N/）；国际新闻在 /news/，这里不显示。"""
     total = pages_of(len(posts), POSTS_PER_PAGE)
     for pg in range(1, total + 1):
         chunk = posts[(pg - 1) * POSTS_PER_PAGE: pg * POSTS_PER_PAGE]
-        parts = []
         if chunk:
             rows = "".join(
                 '<li><time datetime="%s">%s</time><a href="/p/%s.html">%s</a></li>\n'
                 % (p["date"], p["date"], esc(p["slug"]), esc_text(p["title"]))
                 for p in chunk
             )
-            parts.append('<section>\n<div class="sec">文章</div>\n<ul class="list">\n%s</ul>\n%s\n</section>'
-                         % (rows, pager(pg, total, posts_page_url)))
+            body = ('<section>\n<div class="sec">文章</div>\n<ul class="list">\n%s</ul>\n%s\n</section>'
+                    % (rows, pager(pg, total, posts_page_url)))
+        else:
+            body = '<p class="hint">还没有文章，先去看看<a href="/news/">国际新闻</a>吧。</p>'
         if pg == 1:
-            parts.append(
-                '<section id="news" hidden>\n<div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>\n'
-                '<ul class="list" id="news-list"></ul>\n</section>\n'
-                '<noscript><p><a href="/news/">查看国际新闻 →</a></p></noscript>'
-            )
-            parts.append(HOME_JS)
-            write(ROOT / "index.html", page("", "\n".join(parts), desc="twysx：极简博客与每日国际新闻"))
+            write(ROOT / "index.html", page("", body, desc="twysx：极简博客与每日国际新闻"))
         else:
             write(ROOT / "page" / str(pg) / "index.html",
-                  page("文章 · 第 %d 页" % pg, "\n".join(parts), desc="twysx 文章 第 %d 页" % pg))
+                  page("文章 · 第 %d 页" % pg, body, desc="twysx 文章 第 %d 页" % pg))
     drop_stale_pages(ROOT / "page", total)
 
 
@@ -969,9 +939,8 @@ def build_news():
                         desc="每日国际热门新闻" if pg == 1 else "每日国际热门新闻 第 %d 页" % pg))
     drop_stale_pages(NEWS_DIR / "page", total)
 
-    # 3. 首页用的最新 30 条
-    latest = [{"d": day, "t": it["title"], "s": it["source"], "u": it["_u"]} for day, it in flat[:30]]
-    write(NEWS_DIR / "latest.json", json.dumps(latest, ensure_ascii=False, separators=(",", ":")))
+    # 3. 旧版首页的「最新新闻」用过 news/latest.json；现在首页只列文章，把服务器上遗留的旧文件清掉
+    (NEWS_DIR / "latest.json").unlink(missing_ok=True)
 
     # 4. 搜索索引：按月分片（老的月份不再变化，浏览器重复搜索时只会拿到 304），index.json 列出有哪些月份
     by_month = {}
