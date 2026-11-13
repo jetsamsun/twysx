@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>搜索 · twysx</title>
+<meta name="description" content="搜索 twysx 的文章和国际新闻">
+<link rel="stylesheet" href="/style.css?v=7d584e4b">
+<meta name="robots" content="noindex">
+</head>
+<body>
+<div class="wrap">
+<header class="site"><a class="brand" href="/">twysx<span>.</span></a><form class="search" action="/search/" method="get" role="search"><input type="search" name="q" placeholder="搜索文章和新闻" aria-label="搜索" autocomplete="off" enterkeyhint="search" maxlength="100"></form><nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>
+<main>
+<h1>搜索</h1>
+<div id="res" aria-live="polite"><p class="hint">输入关键词，搜索文章和国际新闻。</p></div>
+<noscript><p class="hint">搜索需要启用 JavaScript。</p></noscript>
+<script>
+(function () {
+  var PER = 10;
+  var box = document.getElementById('res');
+  var form = document.querySelector('form.search');
+  var input = form && form.elements.q;
+  var docs = null, loading = null, warn = 0, seq = 0, cur = {q: '', p: 1};
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function note(text) { box.textContent = ''; box.appendChild(el('p', 'hint', text)); }
+  function norm(q) { return String(q || '').replace(/\s+/g, ' ').trim().slice(0, 100); }
+  function url(q, p) { return '/search/' + (q ? '?q=' + encodeURIComponent(q) + (p > 1 ? '&p=' + p : '') : ''); }
+
+  // 404（还没有新闻索引之类）当作空；网络错误或坏 JSON 返回 null
+  function getJSON(u) {
+    return fetch(u, {cache: 'no-cache'})
+      .then(function (r) { return r.status === 404 ? [] : (r.ok ? r.json() : null); })
+      .catch(function () { return null; });
+  }
+
+  function load() {
+    if (loading) return loading;
+    loading = getJSON('/news/idx/index.json').then(function (months) {
+      var urls = ['/search/posts.json'].concat((Array.isArray(months) ? months : []).map(function (m) {
+        return '/news/idx/' + m + '.json';
+      }));
+      return Promise.all(urls.map(function (u) { return getJSON(u); })).then(function (parts) {
+        var out = [], bad = Array.isArray(months) ? 0 : 1, total = urls.length + 1;
+        parts.forEach(function (list, i) {
+          if (!Array.isArray(list)) { bad++; return; }
+          list.forEach(function (d) {
+            var u = String(d && d.u || '');
+            if (u.charAt(0) !== '/' || u.charAt(1) === '/' || u.charAt(1) === '\\') return;   // 只收站内链接
+            d.k = i ? 'n' : 'p';
+            d.tl = String(d.t || '').toLowerCase();
+            d.h = d.tl + '\n' + String(d.s || '').toLowerCase() + '\n' + String(d.x || '').toLowerCase();
+            out.push(d);
+          });
+        });
+        return {docs: out, bad: bad, failed: bad >= total};
+      });
+    });
+    return loading;
+  }
+
+  function pageNums(c, t) {
+    var set = {}, out = [], last = 0;
+    [1, t, c - 1, c, c + 1].forEach(function (n) { if (n >= 1 && n <= t) set[n] = 1; });
+    Object.keys(set).map(Number).sort(function (a, b) { return a - b; }).forEach(function (n) {
+      if (n - last === 2) out.push(last + 1);
+      else if (n - last > 2) out.push(0);   // 0 = 省略号
+      out.push(n);
+      last = n;
+    });
+    return out;
+  }
+
+  function pager(c, t, q) {
+    var nav = el('nav', 'pager');
+    nav.setAttribute('aria-label', '分页');
+    function link(n, text, label) {
+      var a = el('a', '', text);
+      a.href = url(q, n);
+      a.setAttribute('data-p', n);
+      if (label) a.setAttribute('aria-label', label);
+      nav.appendChild(a);
+    }
+    if (c > 1) link(c - 1, '←', '上一页');
+    pageNums(c, t).forEach(function (n) {
+      if (!n) nav.appendChild(el('span', 'gap', '…'));
+      else if (n === c) { var s = el('span', 'cur', String(n)); s.setAttribute('aria-current', 'page'); nav.appendChild(s); }
+      else link(n, String(n));
+    });
+    if (c < t) link(c + 1, '→', '下一页');
+    return nav;
+  }
+
+  function rx(ts) {
+    return new RegExp(ts.slice().sort(function (a, b) { return b.length - a.length; }).map(function (t) {
+      return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }).join('|'), 'gi');
+  }
+
+  // 把 text 里命中关键词的部分包进 <mark>，其余作为文本节点
+  function hl(parent, text, re) {
+    var last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      parent.appendChild(el('mark', '', m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function snippet(text, re) {
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    re.lastIndex = 0;
+    var m = re.exec(text), at = m ? m.index : 0;
+    var from = Math.max(0, at - 40), to = Math.min(text.length, from + 150);
+    return (from > 0 ? '…' : '') + text.slice(from, to) + (to < text.length ? '…' : '');
+  }
+
+  function render(q, p) {
+    var ts = q.toLowerCase().split(' ').slice(0, 8), list = [];
+    docs.forEach(function (d) {
+      var sc = 0;
+      for (var i = 0; i < ts.length; i++) {          // 每个词都要出现（标题/来源/正文任一处）
+        if (d.h.indexOf(ts[i]) < 0) return;
+        sc += d.tl.indexOf(ts[i]) >= 0 ? 10 : 1;       // 标题命中权重更高
+      }
+      list.push({d: d, s: sc});
+    });
+    list.sort(function (a, b) { return b.s - a.s || (a.d.d < b.d.d ? 1 : a.d.d > b.d.d ? -1 : 0); });
+    var total = Math.max(1, Math.ceil(list.length / PER));
+    p = Math.min(Math.max(1, p || 1), total);
+    cur.q = q; cur.p = p;
+    box.textContent = '';
+    if (warn) box.appendChild(el('p', 'hint', '部分搜索索引加载失败，结果可能不完整，稍后再搜一次试试。'));
+    if (!list.length) {
+      box.appendChild(el('p', 'hint', '没有找到与「' + q + '」相关的内容，试试更短或不同的关键词。'));
+      return;
+    }
+    var re = rx(ts);
+    box.appendChild(el('p', 'meta', '找到 ' + list.length + ' 条结果' + (total > 1 ? '，第 ' + p + ' / ' + total + ' 页' : '')));
+    var ul = el('ul', 'res');
+    list.slice((p - 1) * PER, p * PER).forEach(function (r) {
+      var d = r.d, news = d.k === 'n', li = el('li'), a = el('a'), meta = el('div', 'meta');
+      a.href = d.u;
+      if (news) a.lang = 'en';
+      hl(a, String(d.t || ''), re);
+      li.appendChild(a);
+      meta.appendChild(document.createTextNode(String(d.d || '') + ' · '));
+      if (news) hl(meta, String(d.s || ''), re); else meta.appendChild(document.createTextNode('文章'));
+      li.appendChild(meta);
+      var sn = snippet(d.x, re);
+      if (sn) { var para = el('p'); if (news) para.lang = 'en'; hl(para, sn, re); li.appendChild(para); }
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    if (total > 1) box.appendChild(pager(p, total, q));
+  }
+
+  function run(q, p) {
+    q = norm(q);
+    if (input) input.value = q;
+    document.title = (q ? q + ' · ' : '') + '搜索 · twysx';
+    var my = ++seq;
+    if (!q) { note('输入关键词，搜索文章和国际新闻。'); if (input) input.focus(); return; }
+    if (docs) { render(q, p); return; }
+    note('搜索中…');
+    load().then(function (r) {
+      if (my !== seq) return;                         // 期间又发起了新的搜索，丢弃这次
+      if (r.failed) { loading = null; note('搜索索引加载失败，请稍后再试。'); return; }
+      docs = r.docs; warn = r.bad;
+      render(q, p);
+      if (warn) { docs = null; loading = null; }      // 部分失败：下次搜索重新加载
+    });
+  }
+
+  function go(q, p) {
+    q = norm(q);
+    try { history.pushState(null, '', url(q, p)); } catch (e) {}
+    run(q, p);
+  }
+
+  function fromURL() {
+    var u = new URLSearchParams(location.search);
+    run(u.get('q') || '', parseInt(u.get('p'), 10) || 1);
+  }
+
+  if (form) form.addEventListener('submit', function (e) { e.preventDefault(); go(input.value, 1); });
+  box.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('a[data-p]') : null;
+    if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    go(cur.q, parseInt(a.getAttribute('data-p'), 10));
+    window.scrollTo(0, 0);
+  });
+  window.addEventListener('popstate', fromURL);
+  fromURL();
+})();
+</script>
+
+</main>
+<footer class="site">© 2026 twysx</footer>
+</div>
+</body>
+</html>

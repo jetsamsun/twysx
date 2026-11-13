@@ -1,5 +1,5 @@
-:root{--bg:#fff;--fg:#1f2328;--mut:#6b7280;--line:#e5e7eb;--acc:#2f6fed;--code:#f3f4f6}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e6e6;--mut:#8a8f98;--line:#23262d;--acc:#4f8cff;--code:#171a21}}
+:root{--bg:#fff;--fg:#1f2328;--mut:#6b7280;--line:#e5e7eb;--acc:#2f6fed;--onacc:#fff;--code:#f3f4f6;--mark:#fff1a8}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e6e6;--mut:#8a8f98;--line:#23262d;--acc:#4f8cff;--onacc:#0f1115;--code:#171a21;--mark:#5a4a00}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%}
@@ -8,13 +8,19 @@ a{color:var(--acc);text-decoration:none}
 a:hover{text-decoration:underline}
 .wrap{max-width:680px;margin:0 auto;padding:2.5rem 1.25rem 4rem}
 
-header.site{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3rem}
+header.site{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem 1.25rem;margin-bottom:3rem}
 .brand{font-size:1.5rem;font-weight:700;letter-spacing:.08em;color:var(--fg)}
 .brand span{color:var(--acc)}
 .brand:hover{text-decoration:none}
+header.site nav{margin-left:auto}
 header.site nav a{margin-left:1.25rem;color:var(--mut)}
 header.site nav a:hover{color:var(--fg);text-decoration:none}
 footer.site{margin-top:4rem;color:var(--mut);font-size:.85rem}
+
+form.search{flex:1 1 9rem;max-width:15rem;margin:0}
+.search input{width:100%;padding:.35rem .85rem;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--fg);font:inherit;font-size:.9rem;line-height:1.5;-webkit-appearance:none;appearance:none;outline:0}
+.search input::placeholder{color:var(--mut)}
+.search input:focus{border-color:var(--acc)}
 
 h1{font-size:1.75rem;line-height:1.35;margin:.2rem 0 .6rem}
 h2{font-size:1.25rem;margin:2.2rem 0 .8rem}
@@ -23,16 +29,35 @@ p{margin:0 0 1.1rem}
 .meta{color:var(--mut);font-size:.9rem;margin:0 0 1.5rem}
 .lead{font-size:1.05rem}
 .note{color:var(--mut);font-size:.85rem;margin-top:2rem}
+.hint{color:var(--mut)}
 
 .sec{display:flex;justify-content:space-between;align-items:baseline;margin:2.5rem 0 .4rem;font-size:.85rem;font-weight:600;letter-spacing:.1em;color:var(--mut)}
 .sec a{font-weight:400;letter-spacing:0}
 .list{list-style:none;margin:0;padding:0}
 .list li{display:flex;gap:1rem;align-items:baseline;padding:.5rem 0;border-bottom:1px solid var(--line)}
-.list time{flex:none;min-width:3.2rem;color:var(--mut);font-size:.85rem;font-variant-numeric:tabular-nums}
-.list a{flex:1;min-width:0;color:var(--fg)}
-.list a:hover{color:var(--acc);text-decoration:none}
+.list time{flex:none;min-width:5.6rem;color:var(--mut);font-size:.85rem;font-variant-numeric:tabular-nums}
+.list time a{color:inherit}
+.list time a:hover{color:var(--acc)}
+.list li>a{flex:1;min-width:0;color:var(--fg)}
+.list li>a:hover{color:var(--acc);text-decoration:none}
 .list small{flex:none;color:var(--mut);font-size:.8rem}
-.list.full time{min-width:5.6rem}
+
+.pager{display:flex;flex-wrap:wrap;justify-content:center;gap:.4rem;margin:2rem 0 0;font-size:.9rem;line-height:1.5}
+.pager a,.pager span{min-width:2.2rem;padding:.2rem .55rem;text-align:center;border:1px solid var(--line);border-radius:6px}
+.pager a{color:var(--fg)}
+.pager a:hover{border-color:var(--acc);color:var(--acc);text-decoration:none}
+.pager .cur{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.pager .gap{min-width:1.2rem;padding:.2rem 0;border-color:transparent;color:var(--mut)}
+.pager.day{justify-content:space-between}
+.pager.day a[rel=next]{margin-left:auto}
+
+.res{list-style:none;margin:0;padding:0}
+.res li{padding:.9rem 0;border-bottom:1px solid var(--line)}
+.res li>a{color:var(--fg);font-size:1.05rem;line-height:1.5}
+.res li>a:hover{color:var(--acc);text-decoration:none}
+.res .meta{margin:.1rem 0 .3rem;font-size:.8rem}
+.res p{margin:0;color:var(--mut);font-size:.9rem;line-height:1.65}
+mark{background:var(--mark);color:var(--fg);border-radius:2px;padding:0 .1em}
 
 .btn{display:inline-block;padding:.3rem .9rem;border:1px solid var(--line);border-radius:6px;color:var(--fg)}
 .btn:hover{border-color:var(--acc);color:var(--acc);text-decoration:none}
@@ -50,6 +75,11 @@ img{max-width:100%;height:auto}
 
 @media (max-width:480px){
   body{font-size:16px}
+  form.search{order:3;flex-basis:100%;max-width:none}
+  .search input{font-size:16px}
   .list li{flex-wrap:wrap;gap:.1rem .8rem}
-  .list a{flex-basis:100%;order:3}
+  .list li>a{flex-basis:100%;order:3}
+  .pager{gap:.3rem}
+  .pager a,.pager span{min-width:2rem;padding:.2rem .4rem}
+  .pager .gap{min-width:1rem}
 }

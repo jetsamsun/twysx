@@ -5,17 +5,18 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>twysx</title>
 <meta name="description" content="twysx：极简博客与每日国际新闻">
-<link rel="stylesheet" href="/style.css?v=618c3f60">
+<link rel="stylesheet" href="/style.css?v=7d584e4b">
 </head>
 <body>
 <div class="wrap">
-<header class="site"><a class="brand" href="/">twysx<span>.</span></a><nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>
+<header class="site"><a class="brand" href="/">twysx<span>.</span></a><form class="search" action="/search/" method="get" role="search"><input type="search" name="q" placeholder="搜索文章和新闻" aria-label="搜索" autocomplete="off" enterkeyhint="search" maxlength="100"></form><nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>
 <main>
 <section>
 <div class="sec">文章</div>
 <ul class="list">
-<li><time datetime="2026-11-12">11-12</time><a href="/p/hello.html">你好，twysx</a></li>
+<li><time datetime="2026-11-12">2026-11-12</time><a href="/p/hello.html">你好，twysx</a></li>
 </ul>
+
 </section>
 <section id="news" hidden>
 <div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>
@@ -33,7 +34,7 @@
         if (n >= 12 || String(it.u).indexOf('/news/') !== 0) return;
         var li = document.createElement('li'), t = document.createElement('time'),
             a = document.createElement('a'), s = document.createElement('small');
-        t.textContent = String(it.d).slice(5);
+        t.textContent = String(it.d);
         a.textContent = it.t; a.href = it.u; a.lang = 'en';
         s.textContent = it.s;
         li.appendChild(t); li.appendChild(a); li.appendChild(s);

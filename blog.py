@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 """twysx 极简博客生成器（只依赖 Python 标准库，Python >= 3.8）。
 
-  python blog.py build        本地用：重建首页、文章页（受 git 跟踪）和新闻页（news/，git 忽略）
+  python blog.py build        本地用：重建首页（含分页）、文章页、搜索页（都受 git 跟踪）和新闻页（news/，git 忽略）
   python blog.py daily        服务器 cron 用：抓取当天 10 条国际热门新闻，只重建 news/
   python blog.py daily --force   当天已满 10 条时也强制重抓
   python blog.py news         只根据 news/data/*.json 重建 news/ 下的页面
 
-文章：posts/*.md（头部 title/date 两行元数据）  ->  p/<slug>.html
-新闻：服务器每天写 news/data/YYYY-MM-DD.json  ->  news/ 下的页面，这些文件不进 git
+文章：posts/*.md（头部 title/date 两行元数据）  ->  p/<slug>.html；首页文章列表分页为 page/N/
+搜索：search/index.html（搜索页）、search/posts.json（文章索引），随 build 生成并进 git
+新闻：服务器每天写 news/data/YYYY-MM-DD.json  ->  news/ 下的页面（含分页 news/page/N/）和搜索索引 news/idx/，这些文件不进 git
 """
 from __future__ import annotations
 
@@ -32,6 +33,12 @@ POSTS_DIR = ROOT / "posts"
 OUT_POSTS = ROOT / "p"
 NEWS_DIR = ROOT / "news"
 DATA_DIR = NEWS_DIR / "data"
+SEARCH_DIR = ROOT / "search"
+
+POSTS_PER_PAGE = 10      # 首页文章列表每页条数
+NEWS_PER_PAGE = 10       # 国际新闻列表每页条数
+SEARCH_PER_PAGE = 10     # 搜索结果每页条数
+SEARCH_BODY_MAX = 20000  # 每篇文章最多收录进搜索索引的字数
 
 NEWS_PER_DAY = 10      # 每天发布条数
 PER_SOURCE_CAP = 4     # 同一家媒体最多占几条，避免被一家刷屏
@@ -66,8 +73,13 @@ def esc_text(s):
 
 
 def write(path, text):
-    """原子写文件（UTF-8、LF）。"""
+    """原子写文件（UTF-8、LF）。内容没变就不动，保留修改时间，浏览器/CDN 的条件请求才能继续返回 304。"""
     path = Path(path)
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return
+    except (OSError, UnicodeDecodeError):
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
@@ -111,6 +123,13 @@ def css_url():
     return _css_url
 
 
+SEARCH_FORM = (
+    '<form class="search" action="/search/" method="get" role="search">'
+    '<input type="search" name="q" placeholder="搜索文章和新闻" aria-label="搜索" '
+    'autocomplete="off" enterkeyhint="search" maxlength="100"></form>'
+)
+
+
 def page(title, body, desc="", extra_head=""):
     full = "%s · %s" % (title, SITE) if title else SITE
     year = datetime.now(TZ).year
@@ -123,10 +142,78 @@ def page(title, body, desc="", extra_head=""):
         '<link rel="stylesheet" href="%s">\n'
         "%s</head>\n<body>\n<div class=\"wrap\">\n"
         '<header class="site"><a class="brand" href="/">%s<span>.</span></a>'
+        + SEARCH_FORM +
         '<nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>\n'
         "<main>\n%s\n</main>\n"
         '<footer class="site">© %d %s</footer>\n</div>\n</body>\n</html>\n'
     ) % (esc_text(full), esc(desc), esc(css_url()), extra_head, SITE, body, year, SITE)
+
+
+# ----------------------------------------------------------------- 分页
+
+def pages_of(n, size):
+    return max(1, (n + size - 1) // size)
+
+
+def page_numbers(cur, total):
+    """要显示的页码：首页、末页、当前页及前后各 1 页；中间隔开的用 None（省略号）表示，只隔 1 页就直接显示那一页。
+    搜索页的 JS（pageNums）是同一算法，改这里要同步改那边。"""
+    keep = {n for n in (1, total, cur - 1, cur, cur + 1) if 1 <= n <= total}
+    out, last = [], 0
+    for n in sorted(keep):
+        if n - last == 2:
+            out.append(last + 1)
+        elif n - last > 2:
+            out.append(None)
+        out.append(n)
+        last = n
+    return out
+
+
+def pager(cur, total, url_of):
+    """静态页面的分页导航（← 1 … 4 [5] 6 … 20 →）；只有一页时不输出。"""
+    if total <= 1:
+        return ""
+    parts = []
+    if cur > 1:
+        parts.append('<a href="%s" rel="prev" aria-label="上一页">←</a>' % esc(url_of(cur - 1)))
+    for n in page_numbers(cur, total):
+        if n is None:
+            parts.append('<span class="gap">…</span>')
+        elif n == cur:
+            parts.append('<span class="cur" aria-current="page">%d</span>' % n)
+        else:
+            parts.append('<a href="%s">%d</a>' % (esc(url_of(n)), n))
+    if cur < total:
+        parts.append('<a href="%s" rel="next" aria-label="下一页">→</a>' % esc(url_of(cur + 1)))
+    return '<nav class="pager" aria-label="分页">%s</nav>' % "".join(parts)
+
+
+def posts_page_url(n):
+    return "/" if n == 1 else "/page/%d/" % n
+
+
+def news_page_url(n):
+    return "/news/" if n == 1 else "/news/page/%d/" % n
+
+
+def drop_stale_pages(base, total):
+    """清理 base/<n>/index.html 里 n > total 的旧分页（只动纯数字目录里的 index.html）。"""
+    if not base.is_dir():
+        return
+    for d in base.iterdir():
+        if d.is_dir() and d.name.isdigit() and int(d.name) > total:
+            f = d / "index.html"
+            if f.is_file():
+                f.unlink()
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+    try:
+        base.rmdir()  # 一页都不剩时把空目录也收掉；非空会抛 OSError，忽略
+    except OSError:
+        pass
 
 
 # ----------------------------------------------------------------- Markdown（够用的子集）
@@ -272,7 +359,7 @@ HOME_JS = """<script>
         if (n >= 12 || String(it.u).indexOf('/news/') !== 0) return;
         var li = document.createElement('li'), t = document.createElement('time'),
             a = document.createElement('a'), s = document.createElement('small');
-        t.textContent = String(it.d).slice(5);
+        t.textContent = String(it.d);
         a.textContent = it.t; a.href = it.u; a.lang = 'en';
         s.textContent = it.s;
         li.appendChild(t); li.appendChild(a); li.appendChild(s);
@@ -287,21 +374,245 @@ HOME_JS = """<script>
 
 
 def build_home(posts):
-    parts = []
-    if posts:
-        rows = "".join(
-            '<li><time datetime="%s">%s</time><a href="/p/%s.html">%s</a></li>\n'
-            % (p["date"], p["date"][5:], esc(p["slug"]), esc_text(p["title"]))
-            for p in posts[:20]
-        )
-        parts.append('<section>\n<div class="sec">文章</div>\n<ul class="list">\n%s</ul>\n</section>' % rows)
-    parts.append(
-        '<section id="news" hidden>\n<div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>\n'
-        '<ul class="list" id="news-list"></ul>\n</section>\n'
-        '<noscript><p><a href="/news/">查看国际新闻 →</a></p></noscript>'
-    )
-    parts.append(HOME_JS)
-    write(ROOT / "index.html", page("", "\n".join(parts), desc="twysx：极简博客与每日国际新闻"))
+    """首页：文章列表分页（第 1 页是 /，之后是 /page/N/），国际新闻只出现在第 1 页。"""
+    total = pages_of(len(posts), POSTS_PER_PAGE)
+    for pg in range(1, total + 1):
+        chunk = posts[(pg - 1) * POSTS_PER_PAGE: pg * POSTS_PER_PAGE]
+        parts = []
+        if chunk:
+            rows = "".join(
+                '<li><time datetime="%s">%s</time><a href="/p/%s.html">%s</a></li>\n'
+                % (p["date"], p["date"], esc(p["slug"]), esc_text(p["title"]))
+                for p in chunk
+            )
+            parts.append('<section>\n<div class="sec">文章</div>\n<ul class="list">\n%s</ul>\n%s\n</section>'
+                         % (rows, pager(pg, total, posts_page_url)))
+        if pg == 1:
+            parts.append(
+                '<section id="news" hidden>\n<div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>\n'
+                '<ul class="list" id="news-list"></ul>\n</section>\n'
+                '<noscript><p><a href="/news/">查看国际新闻 →</a></p></noscript>'
+            )
+            parts.append(HOME_JS)
+            write(ROOT / "index.html", page("", "\n".join(parts), desc="twysx：极简博客与每日国际新闻"))
+        else:
+            write(ROOT / "page" / str(pg) / "index.html",
+                  page("文章 · 第 %d 页" % pg, "\n".join(parts), desc="twysx 文章 第 %d 页" % pg))
+    drop_stale_pages(ROOT / "page", total)
+
+
+# ----------------------------------------------------------------- 搜索
+
+# 搜索页脚本：纯前端，首次搜索时才下载索引（文章 search/posts.json + 新闻按月分片 news/idx/*.json）。
+# 用户输入和索引里的文字一律用 textContent / 文本节点写入页面，不拼 HTML，所以不会被注入。
+# 分页算法（pageNums）与 Python 的 page_numbers 保持一致。
+SEARCH_JS = r"""<script>
+(function () {
+  var PER = __PER__;
+  var box = document.getElementById('res');
+  var form = document.querySelector('form.search');
+  var input = form && form.elements.q;
+  var docs = null, loading = null, warn = 0, seq = 0, cur = {q: '', p: 1};
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function note(text) { box.textContent = ''; box.appendChild(el('p', 'hint', text)); }
+  function norm(q) { return String(q || '').replace(/\s+/g, ' ').trim().slice(0, 100); }
+  function url(q, p) { return '/search/' + (q ? '?q=' + encodeURIComponent(q) + (p > 1 ? '&p=' + p : '') : ''); }
+
+  // 404（还没有新闻索引之类）当作空；网络错误或坏 JSON 返回 null
+  function getJSON(u) {
+    return fetch(u, {cache: 'no-cache'})
+      .then(function (r) { return r.status === 404 ? [] : (r.ok ? r.json() : null); })
+      .catch(function () { return null; });
+  }
+
+  function load() {
+    if (loading) return loading;
+    loading = getJSON('/news/idx/index.json').then(function (months) {
+      var urls = ['/search/posts.json'].concat((Array.isArray(months) ? months : []).map(function (m) {
+        return '/news/idx/' + m + '.json';
+      }));
+      return Promise.all(urls.map(function (u) { return getJSON(u); })).then(function (parts) {
+        var out = [], bad = Array.isArray(months) ? 0 : 1, total = urls.length + 1;
+        parts.forEach(function (list, i) {
+          if (!Array.isArray(list)) { bad++; return; }
+          list.forEach(function (d) {
+            var u = String(d && d.u || '');
+            if (u.charAt(0) !== '/' || u.charAt(1) === '/' || u.charAt(1) === '\\') return;   // 只收站内链接
+            d.k = i ? 'n' : 'p';
+            d.tl = String(d.t || '').toLowerCase();
+            d.h = d.tl + '\n' + String(d.s || '').toLowerCase() + '\n' + String(d.x || '').toLowerCase();
+            out.push(d);
+          });
+        });
+        return {docs: out, bad: bad, failed: bad >= total};
+      });
+    });
+    return loading;
+  }
+
+  function pageNums(c, t) {
+    var set = {}, out = [], last = 0;
+    [1, t, c - 1, c, c + 1].forEach(function (n) { if (n >= 1 && n <= t) set[n] = 1; });
+    Object.keys(set).map(Number).sort(function (a, b) { return a - b; }).forEach(function (n) {
+      if (n - last === 2) out.push(last + 1);
+      else if (n - last > 2) out.push(0);   // 0 = 省略号
+      out.push(n);
+      last = n;
+    });
+    return out;
+  }
+
+  function pager(c, t, q) {
+    var nav = el('nav', 'pager');
+    nav.setAttribute('aria-label', '分页');
+    function link(n, text, label) {
+      var a = el('a', '', text);
+      a.href = url(q, n);
+      a.setAttribute('data-p', n);
+      if (label) a.setAttribute('aria-label', label);
+      nav.appendChild(a);
+    }
+    if (c > 1) link(c - 1, '←', '上一页');
+    pageNums(c, t).forEach(function (n) {
+      if (!n) nav.appendChild(el('span', 'gap', '…'));
+      else if (n === c) { var s = el('span', 'cur', String(n)); s.setAttribute('aria-current', 'page'); nav.appendChild(s); }
+      else link(n, String(n));
+    });
+    if (c < t) link(c + 1, '→', '下一页');
+    return nav;
+  }
+
+  function rx(ts) {
+    return new RegExp(ts.slice().sort(function (a, b) { return b.length - a.length; }).map(function (t) {
+      return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }).join('|'), 'gi');
+  }
+
+  // 把 text 里命中关键词的部分包进 <mark>，其余作为文本节点
+  function hl(parent, text, re) {
+    var last = 0, m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (!m[0]) { re.lastIndex++; continue; }
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      parent.appendChild(el('mark', '', m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+
+  function snippet(text, re) {
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    re.lastIndex = 0;
+    var m = re.exec(text), at = m ? m.index : 0;
+    var from = Math.max(0, at - 40), to = Math.min(text.length, from + 150);
+    return (from > 0 ? '…' : '') + text.slice(from, to) + (to < text.length ? '…' : '');
+  }
+
+  function render(q, p) {
+    var ts = q.toLowerCase().split(' ').slice(0, 8), list = [];
+    docs.forEach(function (d) {
+      var sc = 0;
+      for (var i = 0; i < ts.length; i++) {          // 每个词都要出现（标题/来源/正文任一处）
+        if (d.h.indexOf(ts[i]) < 0) return;
+        sc += d.tl.indexOf(ts[i]) >= 0 ? 10 : 1;       // 标题命中权重更高
+      }
+      list.push({d: d, s: sc});
+    });
+    list.sort(function (a, b) { return b.s - a.s || (a.d.d < b.d.d ? 1 : a.d.d > b.d.d ? -1 : 0); });
+    var total = Math.max(1, Math.ceil(list.length / PER));
+    p = Math.min(Math.max(1, p || 1), total);
+    cur.q = q; cur.p = p;
+    box.textContent = '';
+    if (warn) box.appendChild(el('p', 'hint', '部分搜索索引加载失败，结果可能不完整，稍后再搜一次试试。'));
+    if (!list.length) {
+      box.appendChild(el('p', 'hint', '没有找到与「' + q + '」相关的内容，试试更短或不同的关键词。'));
+      return;
+    }
+    var re = rx(ts);
+    box.appendChild(el('p', 'meta', '找到 ' + list.length + ' 条结果' + (total > 1 ? '，第 ' + p + ' / ' + total + ' 页' : '')));
+    var ul = el('ul', 'res');
+    list.slice((p - 1) * PER, p * PER).forEach(function (r) {
+      var d = r.d, news = d.k === 'n', li = el('li'), a = el('a'), meta = el('div', 'meta');
+      a.href = d.u;
+      if (news) a.lang = 'en';
+      hl(a, String(d.t || ''), re);
+      li.appendChild(a);
+      meta.appendChild(document.createTextNode(String(d.d || '') + ' · '));
+      if (news) hl(meta, String(d.s || ''), re); else meta.appendChild(document.createTextNode('文章'));
+      li.appendChild(meta);
+      var sn = snippet(d.x, re);
+      if (sn) { var para = el('p'); if (news) para.lang = 'en'; hl(para, sn, re); li.appendChild(para); }
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    if (total > 1) box.appendChild(pager(p, total, q));
+  }
+
+  function run(q, p) {
+    q = norm(q);
+    if (input) input.value = q;
+    document.title = (q ? q + ' · ' : '') + '搜索 · twysx';
+    var my = ++seq;
+    if (!q) { note('输入关键词，搜索文章和国际新闻。'); if (input) input.focus(); return; }
+    if (docs) { render(q, p); return; }
+    note('搜索中…');
+    load().then(function (r) {
+      if (my !== seq) return;                         // 期间又发起了新的搜索，丢弃这次
+      if (r.failed) { loading = null; note('搜索索引加载失败，请稍后再试。'); return; }
+      docs = r.docs; warn = r.bad;
+      render(q, p);
+      if (warn) { docs = null; loading = null; }      // 部分失败：下次搜索重新加载
+    });
+  }
+
+  function go(q, p) {
+    q = norm(q);
+    try { history.pushState(null, '', url(q, p)); } catch (e) {}
+    run(q, p);
+  }
+
+  function fromURL() {
+    var u = new URLSearchParams(location.search);
+    run(u.get('q') || '', parseInt(u.get('p'), 10) || 1);
+  }
+
+  if (form) form.addEventListener('submit', function (e) { e.preventDefault(); go(input.value, 1); });
+  box.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('a[data-p]') : null;
+    if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    go(cur.q, parseInt(a.getAttribute('data-p'), 10));
+    window.scrollTo(0, 0);
+  });
+  window.addEventListener('popstate', fromURL);
+  fromURL();
+})();
+</script>
+"""
+
+
+def build_search(posts):
+    """文章索引（search/posts.json）和搜索页（search/index.html）；新闻索引由 build_news 生成。"""
+    docs = [{
+        "t": p["title"],
+        "u": "/p/%s.html" % p["slug"],
+        "d": p["date"],
+        "x": strip_html(md_to_html(p["body"]))[:SEARCH_BODY_MAX],
+    } for p in posts]
+    write(SEARCH_DIR / "posts.json", json.dumps(docs, ensure_ascii=False, separators=(",", ":")))
+    body = ('<h1>搜索</h1>\n<div id="res" aria-live="polite"><p class="hint">输入关键词，搜索文章和国际新闻。</p></div>\n'
+            '<noscript><p class="hint">搜索需要启用 JavaScript。</p></noscript>\n'
+            + SEARCH_JS.replace("__PER__", str(SEARCH_PER_PAGE)))
+    write(SEARCH_DIR / "index.html",
+          page("搜索", body, desc="搜索 twysx 的文章和国际新闻", extra_head='<meta name="robots" content="noindex">\n'))
 
 
 # ----------------------------------------------------------------- 新闻：抓取
@@ -575,7 +886,8 @@ def item_page(day, it):
     return page(it["title"], "\n".join(parts), desc=it.get("summary", "")[:140])
 
 
-def build_news():
+def load_days():
+    """[(日期, 条目列表)]，新的在前；顺便给每条算好页面地址 _u。"""
     days = []
     if DATA_DIR.is_dir():
         for f in sorted(DATA_DIR.glob("*.json"), reverse=True):
@@ -583,40 +895,96 @@ def build_news():
                 continue
             items = load_day(f)
             if items:
+                for i, it in enumerate(items, 1):
+                    it["_u"] = "/news/%s/%02d-%s.html" % (f.stem, i, slugify(it["title"]))
                 days.append((f.stem, items))
+    return days
 
-    latest = []
-    for day, items in days:
-        for i, it in enumerate(items, 1):
-            it["_u"] = "/news/%s/%02d-%s.html" % (day, i, slugify(it["title"]))
-        dd = NEWS_DIR / day
-        dd.mkdir(parents=True, exist_ok=True)
-        for old in dd.glob("*.html"):
+
+def day_nav(newer, older):
+    """日期页底部的「前一天 / 后一天」：和列表分页同一个方向（左＝更新，右＝更早）。"""
+    parts = []
+    if newer:
+        parts.append('<a href="/news/%s/" rel="prev">← %s</a>' % (newer, newer))
+    if older:
+        parts.append('<a href="/news/%s/" rel="next">%s →</a>' % (older, older))
+    return '<nav class="pager day" aria-label="按日期翻页">%s</nav>' % "".join(parts) if parts else ""
+
+
+def prune(dirpath, keep_names, pattern):
+    """删掉 dirpath 里匹配 pattern、但不在 keep_names 里的文件（先写新的、再删旧的，访客不会撞上空窗）。"""
+    if not dirpath.is_dir():
+        return
+    for old in dirpath.glob(pattern):
+        if old.is_file() and old.name not in keep_names:
             old.unlink()
+
+
+def build_news():
+    days = load_days()
+    flat = [(day, it) for day, items in days for it in items]   # 全部新闻，新的在前
+
+    # 1. 每天一个目录：当天列表页 + 每条新闻一页
+    for n, (day, items) in enumerate(days):
+        dd = NEWS_DIR / day
+        keep = {"index.html"}
         for it in items:
-            write(ROOT / it["_u"].lstrip("/"), item_page(day, it))
+            name = Path(it["_u"]).name
+            keep.add(name)
+            write(dd / name, item_page(day, it))
         rows = "".join(
             '<li><a href="%s" lang="en">%s</a><small>%s</small></li>\n' % (esc(it["_u"]), esc_text(it["title"]), esc_text(it["source"]))
             for it in items)
-        body = ('<h1>%s</h1>\n<p class="meta">国际热门新闻 %d 条</p>\n<ul class="list">\n%s</ul>\n'
-                '<p class="note"><a href="/news/">← 全部日期</a></p>') % (cn_date(day), len(items), rows)
+        body = ('<h1>%s</h1>\n<p class="meta">国际热门新闻 %d 条</p>\n<ul class="list">\n%s</ul>\n%s\n'
+                '<p class="note"><a href="/news/">← 国际新闻</a></p>') % (
+            cn_date(day), len(items), rows,
+            day_nav(days[n - 1][0] if n > 0 else None, days[n + 1][0] if n + 1 < len(days) else None))
         write(dd / "index.html", page(cn_date(day) + " 国际新闻", body, desc=cn_date(day) + "国际热门新闻"))
-        if len(latest) < 30:
-            for it in items:
-                latest.append({"d": day, "t": it["title"], "s": it["source"], "u": it["_u"]})
+        prune(dd, keep, "*.html")
+    shown = {day for day, _ in days}
+    if NEWS_DIR.is_dir():
+        for d in NEWS_DIR.iterdir():   # 数据文件已删的日期，把它生成的页面也收掉
+            if d.is_dir() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d.name) and d.name not in shown:
+                prune(d, set(), "*.html")
+                try:
+                    d.rmdir()
+                except OSError:
+                    pass
 
-    if days:
-        rows = "".join(
-            '<li><time datetime="%s">%s</time><a href="/news/%s/" lang="en">%s</a><small>%d 条</small></li>\n'
-            % (d, d, d, esc_text(items[0]["title"]), len(items)) for d, items in days)
-    else:
-        rows = '<li><a href="/">暂无新闻，稍后再来。</a></li>\n'
+    # 2. 国际新闻列表：全部新闻按时间倒序，每页 NEWS_PER_PAGE 条（第 1 页是 /news/，之后 /news/page/N/）
+    total = pages_of(len(flat), NEWS_PER_PAGE)
     names = "、".join(s for s, _, _ in FEEDS)
-    body = ('<h1>国际新闻</h1>\n<p class="meta">每天 %d 条，整理自 %s 的公开 RSS，只含标题与摘要，版权归原媒体所有。</p>\n'
-            '<ul class="list full">\n%s</ul>') % (NEWS_PER_DAY, names, rows)
-    write(NEWS_DIR / "index.html", page("国际新闻", body, desc="每日国际热门新闻"))
-    write(NEWS_DIR / "latest.json", json.dumps(latest[:30], ensure_ascii=False, separators=(",", ":")))
-    log("新闻页面已生成：%d 天" % len(days))
+    for pg in range(1, total + 1):
+        chunk = flat[(pg - 1) * NEWS_PER_PAGE: pg * NEWS_PER_PAGE]
+        rows = "".join(
+            '<li><time datetime="%s"><a href="/news/%s/">%s</a></time><a href="%s" lang="en">%s</a><small>%s</small></li>\n'
+            % (day, day, day, esc(it["_u"]), esc_text(it["title"]), esc_text(it["source"]))
+            for day, it in chunk) or '<li><a href="/">暂无新闻，稍后再来。</a></li>\n'
+        intro = ("每天 %d 条，整理自 %s 的公开 RSS，只含标题与摘要，版权归原媒体所有。" % (NEWS_PER_DAY, names)
+                 if pg == 1 else "第 %d / %d 页" % (pg, total))
+        body = '<h1>国际新闻</h1>\n<p class="meta">%s</p>\n<ul class="list">\n%s</ul>\n%s' % (
+            intro, rows, pager(pg, total, news_page_url))
+        out = NEWS_DIR / "index.html" if pg == 1 else NEWS_DIR / "page" / str(pg) / "index.html"
+        write(out, page("国际新闻" if pg == 1 else "国际新闻 · 第 %d 页" % pg, body,
+                        desc="每日国际热门新闻" if pg == 1 else "每日国际热门新闻 第 %d 页" % pg))
+    drop_stale_pages(NEWS_DIR / "page", total)
+
+    # 3. 首页用的最新 30 条
+    latest = [{"d": day, "t": it["title"], "s": it["source"], "u": it["_u"]} for day, it in flat[:30]]
+    write(NEWS_DIR / "latest.json", json.dumps(latest, ensure_ascii=False, separators=(",", ":")))
+
+    # 4. 搜索索引：按月分片（老的月份不再变化，浏览器重复搜索时只会拿到 304），index.json 列出有哪些月份
+    by_month = {}
+    for day, it in flat:
+        by_month.setdefault(day[:7], []).append(
+            {"t": it["title"], "u": it["_u"], "d": day, "s": it["source"], "x": it.get("summary", "")})
+    idx = NEWS_DIR / "idx"
+    for month, docs in by_month.items():
+        write(idx / (month + ".json"), json.dumps(docs, ensure_ascii=False, separators=(",", ":")))
+    write(idx / "index.json", json.dumps(sorted(by_month, reverse=True)))
+    prune(idx, {m + ".json" for m in by_month} | {"index.json"}, "*.json")
+
+    log("新闻页面已生成：%d 天、%d 条、列表 %d 页" % (len(days), len(flat), total))
 
 
 # ----------------------------------------------------------------- 入口
@@ -632,8 +1000,9 @@ def main(argv):
         posts = load_posts()
         build_posts(posts)
         build_home(posts)
+        build_search(posts)
         build_news()
-        log("已生成 index.html、p/（%d 篇文章）和 news/" % len(posts))
+        log("已生成 index.html、page/、p/（%d 篇文章）、search/ 和 news/" % len(posts))
         return 0
     if cmd == "daily":
         return daily(force)
