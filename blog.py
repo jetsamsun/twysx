@@ -7,7 +7,7 @@
   python blog.py daily --force   当天已满 10 条时也强制重抓
   python blog.py news         只根据 news/data/*.json 重建 news/ 下的页面
 
-文章：posts/*.md（头部 title/date 两行元数据）  ->  p/<slug>.html；首页文章列表分页为 page/N/
+文章：posts/*.md（头部 title/date 两行元数据）  ->  p/<slug>.html；首页显示最新文章，「文章」列表分页为 articles/、articles/page/N/
 搜索：search/index.html（搜索页）、search/posts.json（文章索引），随 build 生成并进 git
 新闻：服务器每天写 news/data/YYYY-MM-DD.json  ->  news/ 下的页面（含分页 news/page/N/）和搜索索引 news/idx/，这些文件不进 git
 """
@@ -34,8 +34,11 @@ OUT_POSTS = ROOT / "p"
 NEWS_DIR = ROOT / "news"
 DATA_DIR = NEWS_DIR / "data"
 SEARCH_DIR = ROOT / "search"
+ARTICLES_DIR = ROOT / "articles"
 
-POSTS_PER_PAGE = 10      # 首页文章列表每页条数
+HOME_POSTS = 10          # 首页显示的最新文章条数
+HOME_NEWS = 10           # 首页显示的最新新闻条数
+POSTS_PER_PAGE = 10      # 「文章」页（/articles/）每页条数
 NEWS_PER_PAGE = 10       # 国际新闻列表每页条数
 SEARCH_PER_PAGE = 10     # 搜索结果每页条数
 SEARCH_BODY_MAX = 20000  # 每篇文章最多收录进搜索索引的字数
@@ -143,7 +146,7 @@ def page(title, body, desc="", extra_head=""):
         "%s</head>\n<body>\n<div class=\"wrap\">\n"
         '<header class="site"><a class="brand" href="/">%s<span>.</span></a>'
         + SEARCH_FORM +
-        '<nav><a href="/">文章</a><a href="/news/">国际新闻</a></nav></header>\n'
+        '<nav><a href="/articles/">文章</a><a href="/news/">国际新闻</a></nav></header>\n'
         "<main>\n%s\n</main>\n"
         '<footer class="site">© %d %s</footer>\n</div>\n</body>\n</html>\n'
     ) % (esc_text(full), esc(desc), esc(css_url()), extra_head, SITE, body, year, SITE)
@@ -190,7 +193,7 @@ def pager(cur, total, url_of):
 
 
 def posts_page_url(n):
-    return "/" if n == 1 else "/page/%d/" % n
+    return "/articles/" if n == 1 else "/articles/page/%d/" % n
 
 
 def news_page_url(n):
@@ -348,27 +351,68 @@ def build_posts(posts):
             old.unlink()
 
 
+HOME_JS = """<script>
+(function () {
+  var box = document.getElementById('news');
+  fetch('/news/latest.json', {cache: 'no-cache'})
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function (items) {
+      var ul = document.getElementById('news-list'), n = 0;
+      items.forEach(function (it) {
+        if (String(it.u).indexOf('/news/') !== 0) return;
+        var li = document.createElement('li'), t = document.createElement('time'),
+            a = document.createElement('a'), s = document.createElement('small');
+        t.textContent = String(it.d);
+        a.textContent = it.t; a.href = it.u; a.lang = 'en';
+        s.textContent = it.s;
+        li.appendChild(t); li.appendChild(a); li.appendChild(s);
+        ul.appendChild(li); n++;
+      });
+      if (n) box.hidden = false;
+    })
+    .catch(function () {});
+})();
+</script>
+"""
+
+
+def post_rows(chunk):
+    return "".join(
+        '<li><time datetime="%s">%s</time><a href="/p/%s.html">%s</a></li>\n'
+        % (p["date"], p["date"], esc(p["slug"]), esc_text(p["title"]))
+        for p in chunk)
+
+
 def build_home(posts):
-    """首页就是导航里的「文章」：只列文章，分页（第 1 页是 /，之后是 /page/N/）；国际新闻在 /news/，这里不显示。"""
+    """首页：最新 HOME_POSTS 篇文章 + 最新 HOME_NEWS 条国际新闻。
+    新闻由浏览器读取 /news/latest.json 填进来（见 HOME_JS），所以每天更新新闻不需要改动或提交任何受 git 跟踪的文件。"""
+    if posts:
+        articles = ('<section>\n<div class="sec"><span>文章</span><a href="/articles/">全部 →</a></div>\n'
+                    '<ul class="list">\n%s</ul>\n</section>' % post_rows(posts[:HOME_POSTS]))
+    else:
+        articles = '<section>\n<div class="sec"><span>文章</span></div>\n<p class="hint">还没有文章。</p>\n</section>'
+    news = ('<section id="news" hidden>\n<div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>\n'
+            '<ul class="list" id="news-list"></ul>\n</section>\n'
+            '<noscript><p><a href="/news/">查看国际新闻 →</a></p></noscript>')
+    write(ROOT / "index.html", page("", "\n".join([articles, news, HOME_JS]), desc="twysx：极简博客与每日国际新闻"))
+
+
+def build_articles(posts):
+    """「文章」页：只有文章，按时间倒序分页（第 1 页是 /articles/，之后是 /articles/page/N/）。"""
     total = pages_of(len(posts), POSTS_PER_PAGE)
     for pg in range(1, total + 1):
         chunk = posts[(pg - 1) * POSTS_PER_PAGE: pg * POSTS_PER_PAGE]
-        if chunk:
-            rows = "".join(
-                '<li><time datetime="%s">%s</time><a href="/p/%s.html">%s</a></li>\n'
-                % (p["date"], p["date"], esc(p["slug"]), esc_text(p["title"]))
-                for p in chunk
-            )
-            body = ('<section>\n<div class="sec">文章</div>\n<ul class="list">\n%s</ul>\n%s\n</section>'
-                    % (rows, pager(pg, total, posts_page_url)))
+        rows = post_rows(chunk)
+        intro = "共 %d 篇" % len(posts) if pg == 1 else "第 %d / %d 页" % (pg, total)
+        if rows:
+            body = '<h1>文章</h1>\n<p class="meta">%s</p>\n<ul class="list">\n%s</ul>\n%s' % (
+                intro, rows, pager(pg, total, posts_page_url))
         else:
-            body = '<p class="hint">还没有文章，先去看看<a href="/news/">国际新闻</a>吧。</p>'
-        if pg == 1:
-            write(ROOT / "index.html", page("", body, desc="twysx：极简博客与每日国际新闻"))
-        else:
-            write(ROOT / "page" / str(pg) / "index.html",
-                  page("文章 · 第 %d 页" % pg, body, desc="twysx 文章 第 %d 页" % pg))
-    drop_stale_pages(ROOT / "page", total)
+            body = '<h1>文章</h1>\n<p class="hint">还没有文章。</p>'
+        out = ARTICLES_DIR / "index.html" if pg == 1 else ARTICLES_DIR / "page" / str(pg) / "index.html"
+        write(out, page("文章" if pg == 1 else "文章 · 第 %d 页" % pg, body,
+                        desc="twysx 的文章" if pg == 1 else "twysx 的文章 第 %d 页" % pg))
+    drop_stale_pages(ARTICLES_DIR / "page", total)
 
 
 # ----------------------------------------------------------------- 搜索
@@ -939,8 +983,9 @@ def build_news():
                         desc="每日国际热门新闻" if pg == 1 else "每日国际热门新闻 第 %d 页" % pg))
     drop_stale_pages(NEWS_DIR / "page", total)
 
-    # 3. 旧版首页的「最新新闻」用过 news/latest.json；现在首页只列文章，把服务器上遗留的旧文件清掉
-    (NEWS_DIR / "latest.json").unlink(missing_ok=True)
+    # 3. 首页用的最新 HOME_NEWS 条（首页脚本读取）
+    latest = [{"d": day, "t": it["title"], "s": it["source"], "u": it["_u"]} for day, it in flat[:HOME_NEWS]]
+    write(NEWS_DIR / "latest.json", json.dumps(latest, ensure_ascii=False, separators=(",", ":")))
 
     # 4. 搜索索引：按月分片（老的月份不再变化，浏览器重复搜索时只会拿到 304），index.json 列出有哪些月份
     by_month = {}
@@ -969,9 +1014,10 @@ def main(argv):
         posts = load_posts()
         build_posts(posts)
         build_home(posts)
+        build_articles(posts)
         build_search(posts)
         build_news()
-        log("已生成 index.html、page/、p/（%d 篇文章）、search/ 和 news/" % len(posts))
+        log("已生成 index.html、articles/、p/（%d 篇文章）、search/ 和 news/" % len(posts))
         return 0
     if cmd == "daily":
         return daily(force)
