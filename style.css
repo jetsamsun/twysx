@@ -33,6 +33,7 @@ p{margin:0 0 1.1rem}
 
 .sec{display:flex;justify-content:space-between;align-items:baseline;margin:2.5rem 0 .4rem;font-size:.85rem;font-weight:600;letter-spacing:.1em;color:var(--mut)}
 .sec a{font-weight:400;letter-spacing:0}
+.sec .cnt{margin-left:.6rem;font-weight:400;letter-spacing:0}
 .list{list-style:none;margin:0;padding:0}
 .list li{display:flex;gap:1rem;align-items:baseline;padding:.5rem 0;border-bottom:1px solid var(--line)}
 .list time{flex:none;min-width:5.6rem;color:var(--mut);font-size:.85rem;font-variant-numeric:tabular-nums}

@@ -356,7 +356,10 @@ HOME_JS = """<script>
   var box = document.getElementById('news');
   fetch('/news/latest.json', {cache: 'no-cache'})
     .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-    .then(function (items) {
+    .then(function (data) {
+      // 新格式 {total, items}；兼容旧格式（纯数组），新旧文件交替的几秒里也不会出错
+      var items = Array.isArray(data) ? data : ((data && data.items) || []);
+      var total = Array.isArray(data) ? 0 : Math.floor(Number(data && data.total));
       var ul = document.getElementById('news-list'), n = 0;
       items.forEach(function (it) {
         if (String(it.u).indexOf('/news/') !== 0) return;
@@ -368,6 +371,7 @@ HOME_JS = """<script>
         li.appendChild(t); li.appendChild(a); li.appendChild(s);
         ul.appendChild(li); n++;
       });
+      if (total > 0) document.getElementById('news-total').textContent = '共 ' + total + ' 条';
       if (n) box.hidden = false;
     })
     .catch(function () {});
@@ -387,11 +391,11 @@ def build_home(posts):
     """首页：最新 HOME_POSTS 篇文章 + 最新 HOME_NEWS 条国际新闻。
     新闻由浏览器读取 /news/latest.json 填进来（见 HOME_JS），所以每天更新新闻不需要改动或提交任何受 git 跟踪的文件。"""
     if posts:
-        articles = ('<section>\n<div class="sec"><span>文章</span><a href="/articles/">全部 →</a></div>\n'
-                    '<ul class="list">\n%s</ul>\n</section>' % post_rows(posts[:HOME_POSTS]))
+        articles = ('<section>\n<div class="sec"><span>文章<span class="cnt">共 %d 篇</span></span><a href="/articles/">全部 →</a></div>\n'
+                    '<ul class="list">\n%s</ul>\n</section>' % (len(posts), post_rows(posts[:HOME_POSTS])))
     else:
         articles = '<section>\n<div class="sec"><span>文章</span></div>\n<p class="hint">还没有文章。</p>\n</section>'
-    news = ('<section id="news" hidden>\n<div class="sec"><span>国际新闻</span><a href="/news/">全部 →</a></div>\n'
+    news = ('<section id="news" hidden>\n<div class="sec"><span>国际新闻<span class="cnt" id="news-total"></span></span><a href="/news/">全部 →</a></div>\n'
             '<ul class="list" id="news-list"></ul>\n</section>\n'
             '<noscript><p><a href="/news/">查看国际新闻 →</a></p></noscript>')
     write(ROOT / "index.html", page("", "\n".join([articles, news, HOME_JS]), desc="twysx：极简博客与每日国际新闻"))
@@ -403,7 +407,7 @@ def build_articles(posts):
     for pg in range(1, total + 1):
         chunk = posts[(pg - 1) * POSTS_PER_PAGE: pg * POSTS_PER_PAGE]
         rows = post_rows(chunk)
-        intro = "共 %d 篇" % len(posts) if pg == 1 else "第 %d / %d 页" % (pg, total)
+        intro = "共 %d 篇" % len(posts) if pg == 1 else "共 %d 篇 · 第 %d / %d 页" % (len(posts), pg, total)
         if rows:
             body = '<h1>文章</h1>\n<p class="meta">%s</p>\n<ul class="list">\n%s</ul>\n%s' % (
                 intro, rows, pager(pg, total, posts_page_url))
@@ -974,8 +978,8 @@ def build_news():
             '<li><time datetime="%s"><a href="/news/%s/">%s</a></time><a href="%s" lang="en">%s</a><small>%s</small></li>\n'
             % (day, day, day, esc(it["_u"]), esc_text(it["title"]), esc_text(it["source"]))
             for day, it in chunk) or '<li><a href="/">暂无新闻，稍后再来。</a></li>\n'
-        intro = ("每天 %d 条，整理自 %s 的公开 RSS，只含标题与摘要，版权归原媒体所有。" % (NEWS_PER_DAY, names)
-                 if pg == 1 else "第 %d / %d 页" % (pg, total))
+        intro = ("共 %d 条 · 每天 %d 条，整理自 %s 的公开 RSS，只含标题与摘要，版权归原媒体所有。" % (len(flat), NEWS_PER_DAY, names)
+                 if pg == 1 else "共 %d 条 · 第 %d / %d 页" % (len(flat), pg, total))
         body = '<h1>国际新闻</h1>\n<p class="meta">%s</p>\n<ul class="list">\n%s</ul>\n%s' % (
             intro, rows, pager(pg, total, news_page_url))
         out = NEWS_DIR / "index.html" if pg == 1 else NEWS_DIR / "page" / str(pg) / "index.html"
@@ -983,9 +987,9 @@ def build_news():
                         desc="每日国际热门新闻" if pg == 1 else "每日国际热门新闻 第 %d 页" % pg))
     drop_stale_pages(NEWS_DIR / "page", total)
 
-    # 3. 首页用的最新 HOME_NEWS 条（首页脚本读取）
+    # 3. 首页用的最新 HOME_NEWS 条 + 新闻总数（首页脚本读取）
     latest = [{"d": day, "t": it["title"], "s": it["source"], "u": it["_u"]} for day, it in flat[:HOME_NEWS]]
-    write(NEWS_DIR / "latest.json", json.dumps(latest, ensure_ascii=False, separators=(",", ":")))
+    write(NEWS_DIR / "latest.json", json.dumps({"total": len(flat), "items": latest}, ensure_ascii=False, separators=(",", ":")))
 
     # 4. 搜索索引：按月分片（老的月份不再变化，浏览器重复搜索时只会拿到 304），index.json 列出有哪些月份
     by_month = {}
